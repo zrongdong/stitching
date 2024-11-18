@@ -1,90 +1,6 @@
 import cv2
 import numpy as np
 
-
-def thresh2(img):
-    if img.ndim == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img
-    not_gray = cv2.bitwise_not(gray)
-    h, w = gray.shape
-    a = [0 for z in range(0, h)]
-    for j in range(0, h):
-        # if np.var(not_gray[j]) < 5:
-        #     a[j] = 0
-        #     continue
-        # else:
-            for i in range(0, w):
-                a[j] += not_gray[j, i]
-
-    a = np.array(a)
-    cv2.normalize(a, a, 0, w, cv2.NORM_MINMAX)
-    thresh = np.ones((h, np.max(a)))*255
-
-    for j in range(0, h):
-        for i in range(0, a[j]):
-            thresh[j, i] = 0
-    image = np.ones((h, w * 2))
-    image[0:h, 0:w] = gray
-    image[0:h, w:2*w] = thresh
-    return a, image
-
-
-# 水平方向投影匹配拼接
-def stitch(img1, img2):
-    if img1 is None or img2 is None:
-        raise FileNotFoundError
-
-    if img1.shape != img2.shape:
-        raise ValueError
-
-    th1, image1 = thresh2(img1)
-    th2, image2 = thresh2(img2)
-
-    h, w, c = img2.shape
-
-    image1AndImage2 = np.ones((h, image1.shape[1] + image2.shape[1]))
-    image1AndImage2[0:h, 0:image1.shape[1]] = image1
-    image1AndImage2[0:h, image1.shape[1]:image1.shape[1] + image2.shape[1]] = image2
-
-    window = h // 20
-
-    top = window
-    bottom = window
-
-    dst = np.ones(((h - window) // 10 + 1, (h - window) // 10 + 1)) * 255
-
-    for i in range(h - window - 1 - bottom, top, -10):
-        for j in range(top, h - window - 1 - bottom, 10):
-            dst[i // 10, j // 10] = np.max(np.abs(th1[i: i + window] - th2[j: j + window]))
-
-    dstMin, dstMax, dstMinLoc, _ = cv2.minMaxLoc(dst)
-
-    featureMin = 1000
-    image1Height = 0
-    image2Height = 0
-    for i in range(0, 9):
-        for j in range(0, 9):
-            feature1 = th1[dstMinLoc[1] * 10 + i:dstMinLoc[1] * 10 + i + window]
-            feature2 = th2[dstMinLoc[0] * 10 + j:dstMinLoc[0] * 10 + j + window]
-            if np.max(np.abs(feature1 - feature2)) < featureMin:
-                featureMin = np.max(np.abs(feature1 - feature2))
-                image1Height = dstMinLoc[1] * 10 + i
-                image2Height = dstMinLoc[0] * 10 + j
-
-    print("best match ", dstMin, dstMinLoc, "window:", window, image1Height, image2Height, bottom, top)
-
-    print("mean",
-          np.mean(th1[image1Height:image1Height + window] - th2[image2Height:image2Height + window]),
-          np.var(th1[image1Height:image1Height + window] - th2[image2Height:image2Height + window]),
-          )
-
-    if np.var(th1[image1Height:image1Height + window] - th2[image2Height:image2Height + window]) > 100:
-        return 0, image1Height / h, image2Height / h
-    return 1, image1Height/h, image2Height/h
-
-
 # 去重模板匹配法
 def stitch2(img1, img2, ratio):
     if img1 is None or img2 is None:
@@ -95,7 +11,10 @@ def stitch2(img1, img2, ratio):
     # 考虑到旁边滑动条影响 左右个去处20像素进行匹配
     img1 = img1[0:img1.shape[0], 20:img1.shape[1] - 20, 0:img1.shape[2]]
     img2 = img2[0:img2.shape[0], 20:img2.shape[1] - 20, 0:img2.shape[2]]
+    cv2.imwrite("result/去掉左右20像素的图一.jpg", img1)
+    cv2.imwrite("result/去掉左右20像素的图二.jpg", img2)
 
+    # 如果是色彩图像，则将图像灰度化(3就是色彩图像)
     if img1.shape[2] == 3:
         gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
         gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
@@ -103,38 +22,76 @@ def stitch2(img1, img2, ratio):
         gray1 = img1
         gray2 = img2
 
+    cv2.imwrite("result/灰度处理后的图一.jpg", gray1)
+    cv2.imwrite("result/灰度处理后的图二.jpg", gray2)
+
     h, w = gray1.shape
 
+    # 使用了 OpenCV 中的 自适应阈值处理，将灰度图像 gray 转换为 二值图像（即像素值为 0 或 255 的图像）
+    # 这里为 255，所以像素值只有两种可能：0 和 255
+    # 在这里选择的是 均值方法 (cv2.ADAPTIVE_THRESH_MEAN_C)
+    # cv2.THRESH_BINARY：将大于阈值的像素设置为 maxValue，小于或等于阈值的像素设置为 0。
+    # blockSize：定义邻域窗口的大小（必须是奇数），用于计算阈值。 这里是 11，即以 11x11 的窗口为中心计算局部阈值。
+    # C：常数，用于微调阈值。这里是 2，表示从计算出的局部均值中减去 2，以获得更精确的阈值。
+    # 返回一个高宽数组，每个像素的二值(要么是0要么死255)
     thresh1 = cv2.adaptiveThreshold(gray1, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
     thresh2 = cv2.adaptiveThreshold(gray2, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
+    cv2.imwrite("result/自适应阈值后的图1.jpg", thresh1)
+    cv2.imwrite("result/自适应阈值后的图2.jpg", thresh2)
 
+    # 第一步 找到两张图片顶部相同的部分(也就是手机顶部的刘海、电量显示、信号等内容)
     height = h
+    # 计算两幅图像的二值化差异 (相同的地方减出来肯定是0)
     sub = thresh1 - thresh2
+    # 消除噪声，平滑图像
     sub = cv2.medianBlur(sub, 3)
+    cv2.imwrite("result/差异化计算后的图片.jpg", sub)
+
+    # 把0和255改成0和1
     sub = sub // 255
+
+    # 定义一个差异化的阈值 至少差异化要大于十分之一
+    # 比如图片宽度为1000那么不同的像素至少要大于100个
     thresh = w // 10
+
     # 考虑到部分机型底部刘海问题 或者有滑动条等问题 去除掉底部3%的位置开始匹配
     min_height = h*0.97
+
+    # 从下到上对比(h越大也就是越底)
     for i in range(h - 1, 0, -1):
+        # 判断当前行是否满足差异化 也就是10%的差异化
+        # 并且高度必须小于97%(也就是去掉顶部的)
         if np.sum(sub[i]) > thresh and height < min_height:
             print(np.sum(sub[i]))
             break
         height = height - 1
+
+    # 每一块的高度
     block = sub.shape[0] // ratio
 
+    # 图一的底部
     templ = gray1[height - block:height, ]
+    cv2.imwrite("result/图一的底部.jpg", templ)
 
+    # 如果高度小于一块的高度
     if templ.shape[0] < block:
         print("templ shape is too small", templ.shape)
         return 0, 1, 0
 
+    # 在图二中去找图一的底部
     res = cv2.matchTemplate(gray2, templ, cv2.TM_SQDIFF_NORMED)
+    # 返回的好像是每一行的相似度
+
+
+    # mn_val和min_loc表示最佳匹配值和匹配位置
     mn_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
     print("thresh, shape ,height, block", thresh, sub.shape, height, block)
     print("mn_val, max_val, min_loc, max_loc", mn_val, max_val, min_loc, max_loc)
 
     # 考虑到JPG 可能存在成像压缩，至少需要95的相似度才认为匹配成功
     if mn_val < 0.05:
+        # result, bottom, top
+        # result, 图一底部需要裁掉的部分, 图二顶部需要裁掉的部分
         return 1, (height - block) / h, min_loc[1] / h
     else:
         return 0, 1, 0
@@ -143,17 +100,25 @@ def stitch2(img1, img2, ratio):
 def draw(img1, img2):
     h, w, c = img2.shape
 
+    # result, 图一底部需要裁掉的部分, 图二顶部需要裁掉的部分
     result, bottom, top = stitch2(img1, img2, 15)
 
+    # 把比例转换为实际的高度
     bottom = int(bottom * h)
     top = int(top * h)
 
     roi1 = img1[0:bottom, ]
     roi2 = img2[top:h, ]
+    cv2.imwrite("result/图一裁掉剩余.jpg", roi1)
+    cv2.imwrite("result/图二裁掉剩余.jpg", roi2)
 
+    # 创建一个图片 (高度为图一剩余+图二剩余)
     image = np.ones((roi1.shape[0] + roi2.shape[0], w, 3))
+    # 图片的第一部分
     image[0:roi1.shape[0], 0:w, 0:3] = roi1
+    # 图片的第二部分
     image[roi1.shape[0]:roi1.shape[0] + roi2.shape[0], 0:w, 0:3] = roi2
+    # 返回图片
     return image
 
 
@@ -161,4 +126,8 @@ if __name__ == "__main__":
     img1 = cv2.imread("./imgs/1.jpg")
     img2 = cv2.imread("./imgs/2.jpg")
     dst = draw(img1, img2)
+    # img1 = cv2.imread("./imgs/IMG_2941.PNG")
+    # img2 = cv2.imread("./imgs/IMG_2942.PNG")
+    # dst = draw(img1, img2)
     cv2.imwrite("result/1.jpg", dst)
+
