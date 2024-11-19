@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import os
 
 # 去重模板匹配法
 def stitch2(img1, img2, ratio):
@@ -66,7 +67,7 @@ def stitch2(img1, img2, ratio):
     # 考虑到部分机型底部刘海问题 或者有滑动条等问题 去除掉底部3%的位置开始匹配
     height = h2
     min_height = h2*0.97
-
+    print(height)
     # 从下到上对比(h越大也就是越底)
     for i in range(h2 - 1, 0, -1):
         # 判断当前行是否满足差异化 也就是10%的差异化
@@ -78,6 +79,11 @@ def stitch2(img1, img2, ratio):
 
     # 每一块的高度
     block = sub.shape[0] // ratio
+
+    # 如果差异的高度比每一块的高度还要小 那就怎么两张图片几乎一样，不做处理
+    if height < block:
+        return 0, 1, 0
+
 
     # 图一的底部
     templ = gray1[height - block:height, ]
@@ -113,6 +119,8 @@ def draw(img1, img2):
 
     # result, 图一底部需要裁掉的部分, 图二顶部需要裁掉的部分
     result, bottom, top = stitch2(img1, img2, 15)
+    if result == 0:
+        return img1
 
     # 把比例转换为实际的高度
     bottom = int(bottom * h1)
@@ -132,35 +140,64 @@ def draw(img1, img2):
     # 返回图片
     return image
 
+import cv2
+import os
+
+def video2img(video_path, frame_interval=1):
+    # 检查视频路径是否存在
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"视频文件不存在: {video_path}")
+    
+    # 打开视频文件
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"无法打开视频文件: {video_path}")
+    
+    frame_count = 0  # 读取的帧数
+    dst = None # 保存拼接结果
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:  # 视频读取完成
+            break
+        
+        # 只保存符合间隔条件的帧
+        if frame_count % frame_interval == 0:
+            if dst is None:
+                dst = frame
+            else:
+                dst = draw(dst, frame)
+        
+        frame_count += 1
+
+    # 释放视频资源
+    cap.release()
+    return dst
+
 
 
 if __name__ == "__main__":
-    import os
+    # 输出目录
     if not os.path.exists("result"):
         os.makedirs("result")
 
+    # 图片拼接长图
     img1 = cv2.imread("./imgs/IMG_1.PNG")
     img2 = cv2.imread("./imgs/IMG_2.PNG")
     img3 = cv2.imread("./imgs/IMG_3.PNG")
     img4 = cv2.imread("./imgs/IMG_4.PNG")
     img5 = cv2.imread("./imgs/IMG_5.PNG")
-
     dst = None;
     for img in [img1, img2, img3, img4, img5]:
         if dst is None:
             dst = img
         else:
             dst = draw(dst, img)   
-
     cv2.imwrite("result/result.jpg", dst)
 
-    # dst = draw(img1, img2)
-    # # cv2.imwrite("result/result.jpg", dst)
-    # dst = draw(dst, img3)
-    # # cv2.imwrite("result/result.jpg", dst)
-
-    # dst = draw(dst, img4)
-    # dst = draw(dst, img5)
-    # cv2.imwrite("result/result.jpg", dst)
-
+    # 视频拼接长图
+    video_file = "./video/RPReplay_Final1732015583.MP4"
+    frame_interval = 10  # 每10帧保存一次
+    dst = video2img(video_file, frame_interval)
+    cv2.imwrite("result/result1.jpg", dst)
 
